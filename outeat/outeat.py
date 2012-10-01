@@ -5,15 +5,17 @@ import json
 from elixir import metadata, setup_all, session, Entity, Field, String
 from sqlalchemy.orm.exc import NoResultFound
 
-metadata.bind = "sqlite:///outeat.sqlite"
-metadata.bind.echo = True
-
 class Diner(Entity):
     who = Field(String(256), default="", nullable=False)
     where = Field(String(4096), default="[]", nullable=False)
     when = Field(String(64), default="[]", nullable=False)
 
-setup_all(True)
+    def to_dict(self):
+        thisdict = super(Diner, self).to_dict()
+        thisdict['where'] = json.loads(thisdict['where'])
+        thisdict['when'] = json.loads(thisdict['when'])
+        return thisdict
+
 
 class OutEat(object):
     '''
@@ -27,25 +29,30 @@ class OutEat(object):
 
     It's basically the same as sending an email like:
         "I want to eat out today."
-    >>> OutEat().register("Charles")
+    >>> outeat = OutEat()
+    >>> outeat.register("Charles")
     [{'who: 'Charles', 'where': ['any'], 'when': 'any'}]
 
     If they choose, they can give some preferences:
         "I want to eat out today at McKillahenny's Pub or Lopez' Pizza."
-    >>> OutEat().register("Charles", ["McKillahenny's Pub", "Lopez' Pizza"])
+    >>> outeat = OutEat()
+    >>> outeat.register("Charles", ["McKillahenny's Pub", "Lopez' Pizza"])
     [{'who: 'Charles', 'where': ["McKillahenny's Pub", "Lopez' Pizza"], 'when': 'any'}]
 
     Or just a type of food:
         "I want to eat pub food today."
-    >>> OutEat().register("Charles", "pub")
+    >>> outeat = OutEat()
+    >>> outeat.register("Charles", "pub")
     [{'who: 'Charles', 'where': ['pub'], 'when': 'any'}]
 
         "I want to eat chinese today."
-    >>> OutEat().register("Charles", "chinese")
+    >>> outeat = OutEat()
+    >>> outeat.register("Charles", "chinese")
     [{'who: 'Charles', 'where': ['chinese'], 'when': 'any'}]
 
         "I want to eat out for lunch."
-    >>> OutEat().register("Charles", time='lunch')
+    >>> outeat = OutEat()
+    >>> outeat.register("Charles", time='lunch')
     [{'who: 'Charles', 'where': ['pub'], 'when': 'any'}]
 
     This triggers notifications to people subscribed to certain places or types of food.
@@ -57,6 +64,10 @@ class OutEat(object):
     >>> outeat.notify()
     [{'who: 'Charles', 'where': ['chinese', "Lopez' Pizza"], 'when': 'any'}]
     '''
+    def __init__(self, dbpath="sqlite://", dbecho=False):
+        metadata.bind = dbpath
+        metadata.bind.echo = dbecho
+        setup_all(True)
 
     def register(self, person, place=None, time=None):
         if not place:
@@ -64,28 +75,42 @@ class OutEat(object):
         if not time:
             time = ['any']
 
+        if isinstance(place, basestring):
+            place = [place,]
+        if isinstance(time, basestring):
+            time = [time,]
+
         try:
             # Get person if in the Diner table.
             diner = Diner.query.filter_by(who=person).one()
         except NoResultFound:
             # if not, insert a new one.
             diner = Diner(who=person)
+        session.commit() # Commit to get defaults.
+
         # Update their places and times.
         where = json.loads(diner.where)
         if where:
-            where.extend(place)
+            if isinstance(place, basestring):
+                where.append(place)
+            else:
+                where.extend(place)
         else:
             where = place
-        diner.where = json.dumps(where)
+        diner.where = json.dumps(list(set(where)))
 
-        when = json.loads(diner.where)
+        when = json.loads(diner.when)
         if when:
-            when.extend(time)
+            if isinstance(time, basestring):
+                when.append(time)
+            else:
+                when.extend(time)
         else:
             when = time
-        diner.when = json.dumps(where)
+        diner.when = json.dumps(list(set(when)))
 
         session.commit()
+        return [diner.to_dict()]
 
     def notify(self):
         '''Send out notifications to people interested in eating out.'''
